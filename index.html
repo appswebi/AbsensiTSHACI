@@ -1,0 +1,453 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>ABSENSI DIGITAL TSHACI</title>
+  
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+  
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <script src="https://unpkg.com/html5-qrcode"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+
+  <?!= include('css'); ?>
+</head>
+<body>
+
+  <div class="sidebar-overlay" id="sidebarOverlay" onclick="toggleMobileSidebar()"></div>
+
+  <aside class="sidebar" id="mainSidebar">
+    <div>
+      <div class="brand">
+        <div class="brand-logo">
+          <img src="https://i.ibb.co/L5N7P49/LOGO-MTS-CIKOPENG-removebg-preview.png" alt="Logo MTs Cikopeng" id="appBrandLogo" onerror="this.onerror=null; this.src='https://placehold.co/40x40/2563eb/ffffff?text=TSHACI';">
+        </div>
+        <div class="brand-text">
+          <h2>SIM ABSENSI</h2>
+          <p>MTs Hidayatul Aliyyah</p>
+        </div>
+        <button class="mobile-close-btn" onclick="toggleMobileSidebar()"><i class="fa-solid fa-xmark"></i></button>
+      </div>
+
+      <nav class="nav-menu">
+        <a class="nav-item active" id="navSiswa" onclick="switchMainTab('Siswa')"><i class="fa-solid fa-house"></i> Absensi Siswa</a>
+        <a class="nav-item" id="navGuru" onclick="switchMainTab('Guru')"><i class="fa-solid fa-user-tie"></i> Absensi Guru</a>
+        <a class="nav-item" id="navRekap" onclick="switchMainTab('Rekap')"><i class="fa-solid fa-chart-pie"></i> Rekap & Laporan</a>
+        <a class="nav-item" id="navDataSiswa" onclick="switchMainTab('DataSiswa')"><i class="fa-solid fa-id-card"></i> Data Siswa & QR</a>
+        <a class="nav-item" id="navDataGuru" onclick="switchMainTab('DataGuru')"><i class="fa-solid fa-chalkboard-user"></i> Data Guru & QR</a>
+        <a class="nav-item" id="navTemplateWA" onclick="openWATemplateModal()"><i class="fa-brands fa-whatsapp"></i> Template WA</a>
+      </nav>
+    </div>
+
+    <div class="sidebar-footer-quote">
+      "Disiplin hari ini, untuk masa depan yang lebih baik"
+    </div>
+  </aside>
+
+  <div class="main-wrapper">
+    <header class="top-bar">
+      <div style="display: flex; align-items: center; gap: 12px;">
+        <button class="mobile-hamburger-btn" onclick="toggleMobileSidebar()"><i class="fa-solid fa-bars"></i></button>
+        <div class="top-welcome">
+          <h1>Selamat Datang, Admin</h1>
+          <p>Kelola absensi & data master sekolah dengan mudah</p>
+        </div>
+      </div>
+
+      <div class="top-right">
+        <div class="date-badge">
+          <i class="fa-regular fa-calendar"></i>
+          <span id="currentDateText">Senin, 19 Oktober 2026</span>
+        </div>
+
+        <div class="user-profile">
+          <div class="avatar">AD</div>
+          <div>
+            <div style="font-weight: 600; font-size: 13px;">Admin</div>
+            <div style="font-size: 11px; color: var(--text-muted);">Administrator</div>
+          </div>
+        </div>
+      </div>
+    </header>
+
+    <main class="content-container">
+      
+      <div id="viewDashboard">
+        <section class="stats-grid">
+          <div class="card stat-card-main">
+            <div style="display: flex; justify-content: space-between; align-items: center;">
+              <div>
+                <div style="font-size: 18px; font-weight: 700;">Absensi Hari Ini</div>
+                <div style="font-size: 12px; color: #94a3b8;" id="subTitleCategory">Kategori Siswa</div>
+              </div>
+              <i class="fa-solid fa-calendar-check" style="font-size: 26px; color: #2563eb;"></i>
+            </div>
+          </div>
+
+          <div class="card">
+            <div class="card-title-box">
+              <div class="icon-box" style="background: #dcfce7; color: #15803d;"><i class="fa-solid fa-user-check"></i></div>
+              <div>
+                <div style="font-size: 12px; color: var(--text-muted);">Hadir</div>
+                <div class="stat-val" id="statHadir">0</div>
+              </div>
+            </div>
+          </div>
+
+          <div class="card">
+            <div class="card-title-box">
+              <div class="icon-box" style="background: #fef9c3; color: #a16207;"><i class="fa-solid fa-clock"></i></div>
+              <div>
+                <div style="font-size: 12px; color: var(--text-muted);">Terlambat</div>
+                <div class="stat-val" id="statTerlambat">0</div>
+              </div>
+            </div>
+          </div>
+
+          <div class="card">
+            <div class="card-title-box">
+              <div class="icon-box" style="background: #dbeafe; color: #1d4ed8;"><i class="fa-solid fa-file-lines"></i></div>
+              <div>
+                <div style="font-size: 12px; color: var(--text-muted);">Izin</div>
+                <div class="stat-val" id="statIzin">0</div>
+              </div>
+            </div>
+          </div>
+
+          <div class="card">
+            <div class="card-title-box">
+              <div class="icon-box" style="background: #ffe4e6; color: #be123c;"><i class="fa-solid fa-user-xmark"></i></div>
+              <div>
+                <div style="font-size: 12px; color: var(--text-muted);">Tidak Hadir</div>
+                <div class="stat-val" id="statTidakHadir">0</div>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <section class="middle-grid">
+          <div class="card">
+            <div class="tab-switcher">
+              <button class="tab-btn active" id="tabManual" onclick="switchMode('manual')"><i class="fa-solid fa-pen-to-square"></i> Manual</button>
+              <button class="tab-btn" id="tabScan" onclick="switchMode('scan')"><i class="fa-solid fa-qrcode"></i> Scan QR Kamera</button>
+            </div>
+
+            <form id="formAbsensi" onsubmit="handleAbsensiSubmit(event)">
+              <div class="form-group">
+                <label id="lblSelectSubjek">Pilih Siswa</label>
+                <select class="form-control" id="selectSubjek" required>
+                  <option value="">-- Pilih --</option>
+                </select>
+              </div>
+
+              <div class="form-group">
+                <label>Status Kehadiran</label>
+                <select class="form-control" id="selectStatus" required>
+                  <option value="Hadir">Hadir</option>
+                  <option value="Terlambat">Terlambat</option>
+                  <option value="Izin">Izin / Sakit</option>
+                  <option value="Tidak Hadir">Tidak Hadir / Alpa</option>
+                </select>
+              </div>
+
+              <div class="form-group">
+                <label>Keterangan</label>
+                <input type="text" class="form-control" id="txtKeterangan" placeholder="Contoh: Terlambat 10 menit / Surat Sakit">
+              </div>
+
+              <div style="display: flex; gap: 8px; flex-wrap: wrap;">
+                <button type="submit" class="btn-submit" style="flex: 2;"><i class="fa-solid fa-floppy-disk"></i> Simpan Absensi</button>
+                <button type="button" class="btn-submit" style="background: #16a34a; flex: 1; min-width: 140px;" onclick="triggerWANotificationTidakHadir()"><i class="fa-brands fa-whatsapp"></i> Kirim WA Tidak Hadir</button>
+              </div>
+            </form>
+
+            <div id="qrScannerArea" style="display: none; text-align: center;">
+              <div class="camera-controls" style="display:flex; justify-content:space-between; align-items:center; gap:8px;">
+                <div style="flex:1;">
+                  <label for="cameraSelect"><i class="fa-solid fa-camera"></i> Pilih Kamera:</label>
+                  <select id="cameraSelect" class="form-control" onchange="changeCamera(this.value)">
+                    <option value="">Mengisi daftar kamera...</option>
+                  </select>
+                </div>
+                <button type="button" class="btn-submit" style="width:auto; height:38px; margin-top:18px; background:#0284c7; padding:0 12px;" onclick="toggleCameraFacingMode()">
+                  <i class="fa-solid fa-camera-rotate"></i> Flip
+                </button>
+              </div>
+
+              <div style="margin-bottom: 12px; text-align: left; background: #f8fafc; padding: 10px; border-radius: 8px; border: 1px solid var(--border-color);">
+                <label style="display: flex; align-items: center; gap: 8px; font-size: 13px; font-weight: 600; cursor: pointer; color: #166534;">
+                  <input type="checkbox" id="chkAutoOpenWA" checked style="width: 16px; height: 16px; accent-color: #22c55e;">
+                  <i class="fa-brands fa-whatsapp" style="font-size: 16px; color: #22c55e;"></i> Langsung Buka WA Notifikasi Selesai Scan
+                </label>
+              </div>
+
+              <div id="reader-wrapper">
+                <div id="reader"></div>
+              </div>
+
+              <div class="camera-status-badge" id="cameraStatusText">
+                <i class="fa-solid fa-circle-notch fa-spin"></i> Menyiapkan kamera...
+              </div>
+
+              <div style="display: flex; gap: 8px; margin-top: 10px; flex-wrap: wrap;">
+                <button type="button" class="btn-submit" style="background: #475569; flex: 1;" onclick="restartCameraScanner()">
+                  <i class="fa-solid fa-arrows-rotate"></i> Reset Kamera
+                </button>
+              </div>
+            </div>
+          </div>
+
+          <div class="card">
+            <h3 style="font-size: 15px; font-weight: 700; margin-bottom: 16px;"><i class="fa-solid fa-chart-line" style="color: #2563eb;"></i> Tren Kehadiran 7 Hari Terakhir</h3>
+            <div class="chart-wrapper">
+              <canvas id="trendChart"></canvas>
+            </div>
+          </div>
+        </section>
+
+        <section class="card">
+          <div class="table-header-tools">
+            <h3 style="font-size: 16px; font-weight: 700;" id="tableTitle">Daftar Kehadiran Siswa</h3>
+            
+            <div class="search-filter-box">
+              <input type="text" class="form-control" id="inputSearch" placeholder="Cari nama..." oninput="onFilterChange()">
+              
+              <select class="form-control" id="filterKelas" onchange="onFilterChange()">
+                <option value="Semua Kelas">Semua Kelas</option>
+              </select>
+
+              <select class="form-control" id="filterStatus" onchange="onFilterChange()">
+                <option value="Semua Status">Semua Status</option>
+                <option value="Hadir">Hadir</option>
+                <option value="Terlambat">Terlambat</option>
+                <option value="Izin">Izin</option>
+                <option value="Tidak Hadir">Tidak Hadir</option>
+              </select>
+            </div>
+          </div>
+
+          <div class="table-container">
+            <table>
+              <thead>
+                <tr>
+                  <th>No</th>
+                  <th>Nama</th>
+                  <th id="thKelasMapel">Kelas</th>
+                  <th>Jam Masuk</th>
+                  <th>Status</th>
+                  <th>Keterangan</th>
+                  <th>Aksi WA</th>
+                </tr>
+              </thead>
+              <tbody id="tableBody"></tbody>
+            </table>
+          </div>
+
+          <div class="pagination-bar">
+            <span id="pageInfo">Menampilkan 0 data</span>
+            <div class="page-btns">
+              <button class="btn-page" id="btnPrev" onclick="changePage(-1)">Previous</button>
+              <button class="btn-page" id="btnNext" onclick="changePage(1)">Next</button>
+            </div>
+          </div>
+        </section>
+      </div>
+
+      <div id="viewRekapLaporan" style="display: none;">
+        <section class="card" style="margin-bottom: 20px;">
+          <div class="table-header-tools">
+            <h3 style="font-size: 16px; font-weight: 700;"><i class="fa-solid fa-chart-pie" style="color: #2563eb;"></i> Rekapitulasi & Laporan Absensi</h3>
+            
+            <div class="search-filter-box">
+              <select class="form-control" id="rekapPeriode" onchange="loadRekapData()">
+                <option value="Harian">Hari Ini (Harian)</option>
+                <option value="Mingguan">7 Hari Terakhir (Mingguan)</option>
+                <option value="Bulanan">1 Bulan Terakhir (Bulanan)</option>
+                <option value="Semesteran">Semester Ini (6 Bulan)</option>
+              </select>
+
+              <select class="form-control" id="rekapFilterKelas" onchange="loadRekapData()">
+                <option value="Semua Kelas">Semua Kelas / Mapel</option>
+              </select>
+
+              <button class="btn-submit" style="width: auto; background: #16a34a;" onclick="exportRekapToExcel()"><i class="fa-solid fa-file-excel"></i> Unduh Excel</button>
+              <button class="btn-submit" style="width: auto; background: #dc2626;" onclick="exportRekapToPDF()"><i class="fa-solid fa-file-pdf"></i> Unduh PDF</button>
+            </div>
+          </div>
+
+          <div class="tab-switcher" style="margin-top: 10px; max-width: 320px;">
+            <button class="tab-btn active" id="tabRekapSiswa" onclick="switchRekapCategory('Siswa')"><i class="fa-solid fa-user-graduate"></i> Rekap Siswa</button>
+            <button class="tab-btn" id="tabRekapGuru" onclick="switchRekapCategory('Guru')"><i class="fa-solid fa-user-tie"></i> Rekap Guru</button>
+          </div>
+
+          <div class="stats-grid" style="margin-top: 10px;">
+            <div class="card" style="background: #f8fafc;">
+              <div style="font-size: 12px; color: var(--text-muted);">Total Rekap</div>
+              <div class="stat-val" id="rekapTotalCount" style="color: #1e293b;">0</div>
+            </div>
+            <div class="card" style="background: #dcfce7;">
+              <div style="font-size: 12px; color: #15803d;">Total Hadir</div>
+              <div class="stat-val" id="rekapHadirCount" style="color: #15803d;">0</div>
+            </div>
+            <div class="card" style="background: #fef9c3;">
+              <div style="font-size: 12px; color: #a16207;">Total Terlambat</div>
+              <div class="stat-val" id="rekapTerlambatCount" style="color: #a16207;">0</div>
+            </div>
+            <div class="card" style="background: #ffe4e6;">
+              <div style="font-size: 12px; color: #be123c;">Total Tidak Hadir</div>
+              <div class="stat-val" id="rekapTidakHadirCount" style="color: #be123c;">0</div>
+            </div>
+          </div>
+        </section>
+
+        <section class="card">
+          <div class="table-container">
+            <table>
+              <thead>
+                <tr>
+                  <th>No</th>
+                  <th>Tanggal</th>
+                  <th>Nama</th>
+                  <th>Kelas / Mapel</th>
+                  <th>Jam Masuk</th>
+                  <th>Status</th>
+                  <th>Keterangan</th>
+                </tr>
+              </thead>
+              <tbody id="tableRekapBody"></tbody>
+            </table>
+          </div>
+        </section>
+      </div>
+
+      <div id="viewDataSiswa" style="display: none;">
+        <section class="middle-grid">
+          <div class="card">
+            <h3 style="font-size: 16px; font-weight: 700; margin-bottom: 16px;"><i class="fa-solid fa-user-plus" style="color: #2563eb;"></i> Tambah Siswa Baru</h3>
+            <form onsubmit="handleAddSiswa(event)">
+              <div class="form-group"><label>NIS Siswa</label><input type="text" class="form-control" id="addNisSiswa" required placeholder="Contoh: 2026011"></div>
+              <div class="form-group"><label>Nama Lengkap</label><input type="text" class="form-control" id="addNamaSiswa" required placeholder="Nama Siswa"></div>
+              <div class="form-group"><label>Kelas</label><input type="text" class="form-control" id="addKelasSiswa" required placeholder="Contoh: VII A"></div>
+              <div class="form-group"><label>No. WhatsApp Orang Tua</label><input type="text" class="form-control" id="addWaSiswa" required placeholder="628123456789"></div>
+              <button type="submit" class="btn-submit"><i class="fa-solid fa-plus"></i> Simpan Data Siswa</button>
+            </form>
+          </div>
+
+          <div class="card">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px; flex-wrap: wrap; gap: 8px;">
+              <h3 style="font-size: 16px; font-weight: 700;"><i class="fa-solid fa-list"></i> Data Master Siswa & QR</h3>
+              <button class="btn-submit" style="width: auto; padding: 8px 14px; background: #059669;" onclick="printBatchQR('Siswa')"><i class="fa-solid fa-print"></i> Cetak Kartu QR Kelas</button>
+            </div>
+            <div class="table-container" style="max-height: 380px; overflow-y: auto;">
+              <table>
+                <thead>
+                  <tr><th>ID</th><th>NIS</th><th>Nama</th><th>Kelas</th><th>No. WA</th><th>Aksi</th></tr>
+                </thead>
+                <tbody id="tableMasterSiswa"></tbody>
+              </table>
+            </div>
+          </div>
+        </section>
+      </div>
+
+      <div id="viewDataGuru" style="display: none;">
+        <section class="middle-grid">
+          <div class="card">
+            <h3 style="font-size: 16px; font-weight: 700; margin-bottom: 16px;"><i class="fa-solid fa-user-tie" style="color: #2563eb;"></i> Tambah Guru Baru</h3>
+            <form onsubmit="handleAddGuru(event)">
+              <div class="form-group"><label>NIP Guru</label><input type="text" class="form-control" id="addNipGuru" required placeholder="19850101..."></div>
+              <div class="form-group"><label>Nama Lengkap & Gelar</label><input type="text" class="form-control" id="addNamaGuru" required placeholder="Budi Santoso, S.Pd."></div>
+              <div class="form-group"><label>Mata Pelajaran</label><input type="text" class="form-control" id="addMapelGuru" required placeholder="Contoh: Matematika"></div>
+              <div class="form-group"><label>No. WhatsApp</label><input type="text" class="form-control" id="addWaGuru" required placeholder="628198765432"></div>
+              <button type="submit" class="btn-submit"><i class="fa-solid fa-plus"></i> Simpan Data Guru</button>
+            </form>
+          </div>
+
+          <div class="card">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px; flex-wrap: wrap; gap: 8px;">
+              <h3 style="font-size: 16px; font-weight: 700;"><i class="fa-solid fa-list"></i> Data Master Guru & QR</h3>
+              <button class="btn-submit" style="width: auto; padding: 8px 14px; background: #059669;" onclick="printBatchQR('Guru')"><i class="fa-solid fa-print"></i> Cetak Kartu QR Guru</button>
+            </div>
+            <div class="table-container" style="max-height: 380px; overflow-y: auto;">
+              <table>
+                <thead>
+                  <tr><th>ID</th><th>NIP</th><th>Nama</th><th>Mapel</th><th>No. WA</th><th>Aksi</th></tr>
+                </thead>
+                <tbody id="tableMasterGuru"></tbody>
+              </table>
+            </div>
+          </div>
+        </section>
+      </div>
+
+    </main>
+  </div>
+
+  <div class="modal-overlay" id="customModal">
+    <div class="modal-card">
+      <h3 style="font-size: 18px; font-weight: 700; margin-bottom: 10px;" id="modalTitle">Notifikasi</h3>
+      <p style="font-size: 14px; color: var(--text-muted); margin-bottom: 20px;" id="modalBody">Pesan modal</p>
+      
+      <div id="modalQRContainer" style="text-align: center; display: none; margin-bottom: 20px;">
+        <div id="qrcode" class="qr-preview-box"></div>
+        <p style="font-size: 12px; font-weight: 600; color: #1e293b;" id="qrSubjekLabel"></p>
+      </div>
+
+      <div style="display: flex; justify-content: flex-end; gap: 10px; flex-wrap: wrap;">
+        <a id="btnWALink" href="#" target="_blank" class="btn-submit" style="display: none; background: #22c55e; width: auto;"><i class="fa-brands fa-whatsapp"></i> Kirim Notifikasi WA Sekarang</a>
+        <button class="btn-submit" style="width: auto; background: #64748b;" onclick="closeModal()">Tutup</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="modal-overlay" id="waTemplateModal">
+    <div class="modal-card" style="max-width: 500px;">
+      <h3 style="font-size: 18px; font-weight: 700; margin-bottom: 8px;"><i class="fa-brands fa-whatsapp" style="color: #22c55e;"></i> Pengaturan Template Pesan WA</h3>
+      <p style="font-size: 12px; color: var(--text-muted); margin-bottom: 14px;">Sesuaikan isi pesan otomatis yang dikirim ke orang tua / wali siswa.</p>
+      
+      <div class="form-group">
+        <label>Format Pesan WhatsApp</label>
+        <textarea id="txtWATemplate" class="form-control" rows="8" style="resize: vertical; font-family: monospace; font-size: 12px;"></textarea>
+      </div>
+
+      <div style="background: #f1f5f9; padding: 10px; border-radius: 8px; font-size: 11px; color: #475569; margin-bottom: 16px;">
+        <strong>Variabel Otomatis Tersedia:</strong><br>
+        <code>{NAMA}</code> : Nama Siswa/Guru<br>
+        <code>{STATUS}</code> : Status Absensi (HADIR/TERLAMBAT/IZIN)<br>
+        <code>{TANGGAL}</code> : Tanggal Absensi<br>
+        <code>{JAM}</code> : Jam Scan Masuk<br>
+        <code>{KETERANGAN}</code> : Catatan Keterangan
+      </div>
+
+      <div style="display: flex; justify-content: flex-end; gap: 10px;">
+        <button type="button" class="btn-submit" style="background: #64748b; width: auto;" onclick="closeWATemplateModal()">Batal</button>
+        <button type="button" class="btn-submit" style="background: #2563eb; width: auto;" onclick="saveWATemplate()"><i class="fa-solid fa-floppy-disk"></i> Simpan Template</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="modal-overlay" id="editMasterModal">
+    <div class="modal-card">
+      <h3 style="font-size: 18px; font-weight: 700; margin-bottom: 16px;" id="editModalTitle">Edit Data Master</h3>
+      <form id="formEditMaster" onsubmit="handleEditMasterSubmit(event)">
+        <input type="hidden" id="editMasterId">
+        <input type="hidden" id="editMasterType">
+        <div class="form-group"><label id="lblEditNisNip">NIS / NIP</label><input type="text" class="form-control" id="editNisNip" required></div>
+        <div class="form-group"><label>Nama Lengkap</label><input type="text" class="form-control" id="editNama" required></div>
+        <div class="form-group"><label id="lblEditKelasMapel">Kelas / Mapel</label><input type="text" class="form-control" id="editKelasMapel" required></div>
+        <div class="form-group"><label>No. WhatsApp</label><input type="text" class="form-control" id="editNoWa" required></div>
+        <div style="display: flex; justify-content: flex-end; gap: 10px; margin-top: 20px;">
+          <button type="button" class="btn-submit" style="background: #64748b; width: auto;" onclick="closeEditModal()">Batal</button>
+          <button type="submit" class="btn-submit" style="width: auto;"><i class="fa-solid fa-floppy-disk"></i> Simpan Perubahan</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <div id="printSection"></div>
+
+  <?!= include('js'); ?>
+</body>
+</html>

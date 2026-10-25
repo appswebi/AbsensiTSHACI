@@ -1,0 +1,1143 @@
+<script>
+  // Dynamic backend URL handler: Works on Google Apps Script AND GitHub Pages
+  var APPS_SCRIPT_URL = localStorage.getItem('tshaci_backend_url') || 'https://script.google.com/macros/s/YOUR_EXEC_ID/exec'; 
+
+  var currentCategory = 'Siswa';
+  var rekapCategory = 'Siswa';
+  var currentPage = 1;
+  var limit = 10;
+  var trendChartInstance = null;
+  var html5QrScanner = null;
+  var scanCooldown = false;
+  var lastScannedCode = '';
+  var isCameraStarting = false;
+  var selectedCameraId = '';
+  var currentFacingMode = 'environment'; // Default: back camera
+
+  var defaultWATemplate = "*PEMBERITAHUAN ABSENSI DIGITAL TSHACI*\n\n" +
+    "Yth. Bapak/Ibu Orang Tua/Wali dari:\n" +
+    "Nama: *{NAMA}*\n" +
+    "Tanggal: {TANGGAL}\n" +
+    "Status Kehadiran: *{STATUS}*\n" +
+    "Jam Masuk: {JAM}\n" +
+    "Keterangan: {KETERANGAN}\n\n" +
+    "_Pesan otomatis dari SIM Absensi TSHACI._";
+
+  // Hybrid Bridge: Calls Google Apps Script directly if inside Apps Script, or via fetch API if hosted on GitHub Pages
+  function callBackend(actionName, payload, options) {
+    options = options || {};
+    return new Promise(function(resolve, reject) {
+      if (typeof google !== 'undefined' && google.script && google.script.run) {
+        var runner = google.script.run
+          .withSuccessHandler(function(res) { resolve(res); })
+          .withFailureHandler(function(err) { reject(err); });
+        
+        if (options.isPost) {
+          runner[actionName](payload);
+        } else {
+          runner[actionName](payload);
+        }
+      } else {
+        // Validation check for dummy URL in standalone/GitHub Pages deployment
+        if (!APPS_SCRIPT_URL || APPS_SCRIPT_URL.indexOf('YOUR_EXEC_ID') !== -1) {
+          reject(new Error('URL Apps Script belum diisi! Silakan konfigurasi APPS_SCRIPT_URL di menu pengaturan.'));
+          return;
+        }
+
+        // GitHub Pages Cross-Domain API Endpoint Fetching
+        if (options.isPost) {
+          fetch(APPS_SCRIPT_URL, {
+            method: 'POST',
+            headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+            body: JSON.stringify(Object.assign({ action: actionName }, payload))
+          })
+          .then(function(res) {
+            if (!res.ok) throw new Error('Network response was not ok: ' + res.statusText);
+            return res.json();
+          })
+          .then(function(data) { resolve(data); })
+          .catch(function(err) { reject(err); });
+        } else {
+          var queryParams = new URLSearchParams(Object.assign({ action: actionName }, payload)).toString();
+          fetch(APPS_SCRIPT_URL + '?' + queryParams)
+          .then(function(res) {
+            if (!res.ok) throw new Error('Network response was not ok: ' + res.statusText);
+            return res.json();
+          })
+          .then(function(data) { resolve(data); })
+          .catch(function(err) { reject(err); });
+        }
+      }
+    });
+  }
+
+  function getActiveWATemplate() {
+    return localStorage.getItem('tshaci_wa_template') || defaultWATemplate;
+  }
+
+  function openWATemplateModal() {
+    var txt = document.getElementById('txtWATemplate');
+    if (txt) txt.value = getActiveWATemplate();
+    var modal = document.getElementById('waTemplateModal');
+    if (modal) modal.classList.add('active');
+  }
+
+  function closeWATemplateModal() {
+    var modal = document.getElementById('waTemplateModal');
+    if (modal) modal.classList.remove('active');
+  }
+
+  function saveWATemplate() {
+    var txt = document.getElementById('txtWATemplate');
+    if (txt) {
+      localStorage.setItem('tshaci_wa_template', txt.value);
+      showModal('Sukses', 'Template pesan WhatsApp berhasil disimpan!');
+    }
+    closeWATemplateModal();
+  }
+
+  function playAudioFeedback(type) {
+    try {
+      var ctx = new (window.AudioContext || window.webkitAudioContext)();
+      var osc = ctx.createOscillator();
+      var gain = ctx.createGain();
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+
+      if (type === 'success') {
+        osc.frequency.setValueAtTime(880, ctx.currentTime);
+        gain.gain.setValueAtTime(0.3, ctx.currentTime);
+        osc.start();
+        osc.stop(ctx.currentTime + 0.15);
+      } else {
+        osc.frequency.setValueAtTime(300, ctx.currentTime);
+        gain.gain.setValueAtTime(0.4, ctx.currentTime);
+        osc.start();
+        osc.stop(ctx.currentTime + 0.3);
+      }
+    } catch (e) {
+      console.warn('Audio Feedback failed:', e);
+    }
+  }
+
+  window.addEventListener('DOMContentLoaded', function() {
+    updateCurrentDateDisplay();
+    switchMainTab('Siswa');
+  });
+
+  function updateCurrentDateDisplay() {
+    var dateElem = document.getElementById('currentDateText');
+    if (!dateElem) return;
+    var now = new Date();
+    var options = { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' };
+    dateElem.innerText = now.toLocaleDateString('id-ID', options);
+  }
+
+  function toggleMobileSidebar() {
+    var sidebar = document.getElementById('mainSidebar');
+    var overlay = document.getElementById('sidebarOverlay');
+    if (sidebar) sidebar.classList.toggle('active');
+    if (overlay) overlay.classList.toggle('active');
+  }
+
+  function switchMainTab(category) {
+    var nSis = document.getElementById('navSiswa');
+    var nGur = document.getElementById('navGuru');
+    var nRek = document.getElementById('navRekap');
+    var nDSis = document.getElementById('navDataSiswa');
+    var nDGur = document.getElementById('navDataGuru');
+
+    if (nSis) nSis.classList.toggle('active', category === 'Siswa');
+    if (nGur) nGur.classList.toggle('active', category === 'Guru');
+    if (nRek) nRek.classList.toggle('active', category === 'Rekap');
+    if (nDSis) nDSis.classList.toggle('active', category === 'DataSiswa');
+    if (nDGur) nDGur.classList.toggle('active', category === 'DataGuru');
+
+    var vDash = document.getElementById('viewDashboard');
+    var vRek = document.getElementById('viewRekapLaporan');
+    var vDSis = document.getElementById('viewDataSiswa');
+    var vDGur = document.getElementById('viewDataGuru');
+
+    if (category === 'Siswa' || category === 'Guru') {
+      currentCategory = category;
+      currentPage = 1;
+
+      if (vDash) vDash.style.display = 'block';
+      if (vRek) vRek.style.display = 'none';
+      if (vDSis) vDSis.style.display = 'none';
+      if (vDGur) vDGur.style.display = 'none';
+
+      var subTitle = document.getElementById('subTitleCategory');
+      var lblSubj = document.getElementById('lblSelectSubjek');
+      var tblTitle = document.getElementById('tableTitle');
+      var thKM = document.getElementById('thKelasMapel');
+
+      if (subTitle) subTitle.innerText = 'Kategori ' + category;
+      if (lblSubj) lblSubj.innerText = 'Pilih ' + category;
+      if (tblTitle) tblTitle.innerText = 'Daftar Kehadiran ' + category;
+      if (thKM) thKM.innerText = (category === 'Guru') ? 'Mapel' : 'Kelas';
+
+      switchMode('manual');
+      loadCategoryData();
+    } else if (category === 'Rekap') {
+      if (vDash) vDash.style.display = 'none';
+      if (vRek) vRek.style.display = 'block';
+      if (vDSis) vDSis.style.display = 'none';
+      if (vDGur) vDGur.style.display = 'none';
+      stopCameraScanner();
+      loadRekapData();
+    } else if (category === 'DataSiswa') {
+      if (vDash) vDash.style.display = 'none';
+      if (vRek) vRek.style.display = 'none';
+      if (vDSis) vDSis.style.display = 'block';
+      if (vDGur) vDGur.style.display = 'none';
+      stopCameraScanner();
+      loadMasterSiswa();
+    } else if (category === 'DataGuru') {
+      if (vDash) vDash.style.display = 'none';
+      if (vRek) vRek.style.display = 'none';
+      if (vDSis) vDSis.style.display = 'none';
+      if (vDGur) vDGur.style.display = 'block';
+      stopCameraScanner();
+      loadMasterGuru();
+    }
+
+    var sidebar = document.getElementById('mainSidebar');
+    var overlay = document.getElementById('sidebarOverlay');
+    if (sidebar) sidebar.classList.remove('active');
+    if (overlay) overlay.classList.remove('active');
+  }
+
+  function switchRekapCategory(cat) {
+    rekapCategory = cat;
+    var tSis = document.getElementById('tabRekapSiswa');
+    var tGur = document.getElementById('tabRekapGuru');
+    if (tSis) tSis.classList.toggle('active', cat === 'Siswa');
+    if (tGur) tGur.classList.toggle('active', cat === 'Guru');
+    loadRekapData();
+  }
+
+  function loadCategoryData() {
+    fetchStats();
+    fetchMasterOptions();
+    fetchTrendChart();
+    fetchTableData();
+  }
+
+  function fetchStats() {
+    callBackend('getDashboardMetrics', currentCategory)
+      .then(function(res) {
+        if (res && res.success && res.data) {
+          var d = res.data;
+          var eH = document.getElementById('statHadir');
+          var eT = document.getElementById('statTerlambat');
+          var eI = document.getElementById('statIzin');
+          var eTH = document.getElementById('statTidakHadir');
+
+          if (eH) eH.innerText = d.hadir;
+          if (eT) eT.innerText = d.terlambat;
+          if (eI) eI.innerText = d.izin;
+          if (eTH) eTH.innerText = d.tidakHadir;
+        }
+      })
+      .catch(function(err) {
+        console.warn('Fetch Stats failed:', err.message || err);
+      });
+  }
+
+  function fetchMasterOptions() {
+    callBackend('getMasterOptions', currentCategory)
+      .then(function(res) {
+        if (res && res.success) {
+          var selSubj = document.getElementById('selectSubjek');
+          if (selSubj) {
+            selSubj.innerHTML = '<option value="">-- Pilih ' + currentCategory + ' --</option>';
+            res.items.forEach(function(item) {
+              selSubj.innerHTML += '<option value="' + escapeHtml(item.id) + '">' + escapeHtml(item.nama) + ' (' + escapeHtml(item.kelasMapel) + ')</option>';
+            });
+          }
+
+          var selFilter = document.getElementById('filterKelas');
+          var selRekapFilter = document.getElementById('rekapFilterKelas');
+
+          if (selFilter) {
+            selFilter.innerHTML = '<option value="Semua Kelas">Semua ' + (currentCategory === 'Guru' ? 'Mapel' : 'Kelas') + '</option>';
+            res.classes.forEach(function(cls) {
+              selFilter.innerHTML += '<option value="' + escapeHtml(cls) + '">' + escapeHtml(cls) + '</option>';
+            });
+          }
+
+          if (selRekapFilter) {
+            selRekapFilter.innerHTML = '<option value="Semua Kelas">Semua ' + (currentCategory === 'Guru' ? 'Mapel' : 'Kelas') + '</option>';
+            res.classes.forEach(function(cls) {
+              selRekapFilter.innerHTML += '<option value="' + escapeHtml(cls) + '">' + escapeHtml(cls) + '</option>';
+            });
+          }
+        }
+      })
+      .catch(function(err) {
+        console.warn('Fetch Master Options failed:', err.message || err);
+      });
+  }
+
+  function fetchTrendChart() {
+    callBackend('get7DaysTrend', currentCategory)
+      .then(function(res) {
+        if (res && res.success && res.data) {
+          renderTrendChart(res.data);
+        }
+      })
+      .catch(function(err) {
+        console.warn('Fetch Trend Chart failed:', err.message || err);
+      });
+  }
+
+  function renderTrendChart(chartData) {
+    var canvas = document.getElementById('trendChart');
+    if (!canvas) return;
+    var ctx = canvas.getContext('2d');
+
+    if (trendChartInstance) {
+      trendChartInstance.destroy();
+    }
+
+    trendChartInstance = new Chart(ctx, {
+      type: 'line',
+      data: {
+        labels: chartData.labels,
+        datasets: [
+          { label: 'Hadir', data: chartData.hadir, borderColor: '#16a34a', backgroundColor: 'rgba(22, 163, 74, 0.1)', fill: true, tension: 0.3 },
+          { label: 'Terlambat', data: chartData.terlambat, borderColor: '#d97706', backgroundColor: 'transparent', tension: 0.3 },
+          { label: 'Izin', data: chartData.izin, borderColor: '#2563eb', backgroundColor: 'transparent', tension: 0.3 },
+          { label: 'Tidak Hadir', data: chartData.tidakHadir, borderColor: '#e11d48', backgroundColor: 'transparent', tension: 0.3 }
+        ]
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: { legend: { position: 'bottom', labels: { boxWidth: 12, font: { size: 11 } } } },
+        scales: {
+          y: { beginAtZero: true, ticks: { precision: 0 } }
+        }
+      }
+    });
+  }
+
+  function fetchTableData() {
+    var searchVal = document.getElementById('inputSearch') ? document.getElementById('inputSearch').value : '';
+    var kelasVal = document.getElementById('filterKelas') ? document.getElementById('filterKelas').value : 'Semua Kelas';
+    var statusVal = document.getElementById('filterStatus') ? document.getElementById('filterStatus').value : 'Semua Status';
+
+    callBackend('getAbsensiPaginated', {
+      category: currentCategory,
+      page: currentPage,
+      limit: limit,
+      search: searchVal,
+      filterKelas: kelasVal,
+      filterStatus: statusVal
+    }).then(function(res) {
+      if (res && res.success) {
+        renderTableRows(res.data, res.currentPage, res.totalRecords);
+        updatePaginationControls(res.currentPage, res.totalPages, res.totalRecords);
+      }
+    }).catch(function(err) {
+      console.warn('Fetch Table Data failed:', err.message || err);
+      renderTableRows([], 1, 0);
+    });
+  }
+
+  function renderTableRows(data, page, total) {
+    var tbody = document.getElementById('tableBody');
+    if (!tbody) return;
+    tbody.innerHTML = '';
+
+    if (!data || data.length === 0) {
+      tbody.innerHTML = '<tr><td colspan="7" style="text-align:center; color: var(--text-muted); padding:20px;">Belum ada data absensi untuk kategori ini.</td></tr>';
+      return;
+    }
+
+    var startNum = (page - 1) * limit + 1;
+    data.forEach(function(item, idx) {
+      var badgeClass = 'badge-hadir';
+      if (item.status === 'Terlambat') badgeClass = 'badge-terlambat';
+      else if (item.status === 'Izin' || item.status === 'Sakit') badgeClass = 'badge-izin';
+      else if (item.status === 'Tidak Hadir' || item.status === 'Alpa') badgeClass = 'badge-alpa';
+
+      var tr = document.createElement('tr');
+      tr.innerHTML = '<td>' + (startNum + idx) + '</td>' +
+                     '<td style="font-weight:600;">' + escapeHtml(item.nama) + '</td>' +
+                     '<td>' + escapeHtml(item.kelasMapel) + '</td>' +
+                     '<td>' + escapeHtml(item.jamMasuk) + '</td>' +
+                     '<td><span class="badge ' + badgeClass + '">' + escapeHtml(item.status) + '</span></td>' +
+                     '<td style="color:var(--text-muted);">' + escapeHtml(item.keterangan) + '</td>' +
+                     '<td><button class="btn-submit" style="padding:4px 8px; font-size:11px; width:auto; min-height:28px; background:#22c55e;" onclick="triggerWA(\'' + escapeHtml(item.nama) + '\',\'' + escapeHtml(item.status) + '\')"><i class="fa-brands fa-whatsapp"></i> WA</button></td>';
+      tbody.appendChild(tr);
+    });
+  }
+
+  function updatePaginationControls(page, totalPages, total) {
+    var pageInfo = document.getElementById('pageInfo');
+    var btnPrev = document.getElementById('btnPrev');
+    var btnNext = document.getElementById('btnNext');
+
+    if (pageInfo) pageInfo.innerText = 'Halaman ' + page + ' dari ' + totalPages + ' (' + total + ' Total Data)';
+
+    if (btnPrev) {
+      btnPrev.classList.toggle('disabled', page <= 1);
+      btnPrev.disabled = (page <= 1);
+    }
+
+    if (btnNext) {
+      btnNext.classList.toggle('disabled', page >= totalPages);
+      btnNext.disabled = (page >= totalPages);
+    }
+  }
+
+  function onScanSuccess(decodedText) {
+    if (scanCooldown || !decodedText) return;
+    
+    var cleanText = String(decodedText).trim();
+    if (!cleanText || cleanText === lastScannedCode) return;
+
+    scanCooldown = true;
+    lastScannedCode = cleanText;
+
+    playAudioFeedback('success');
+
+    var statusElem = document.getElementById('cameraStatusText');
+    if (statusElem) {
+      statusElem.style.background = '#dbeafe';
+      statusElem.style.color = '#1d4ed8';
+      statusElem.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Memproses Presensi QR...';
+    }
+
+    var currentTemplate = getActiveWATemplate();
+
+    callBackend('recordAbsensiByQR', { qrCode: cleanText, customTemplate: currentTemplate }, { isPost: true })
+      .then(function(res) {
+        if (res && res.success) {
+          loadCategoryData();
+
+          var chkAutoWA = document.getElementById('chkAutoOpenWA');
+          var isAutoWA = chkAutoWA ? chkAutoWA.checked : true;
+
+          if (res.waLink && isAutoWA) {
+            window.open(res.waLink, '_blank');
+            showModal('Presensi Berhasil & WA Terkirim', res.message, res.waLink);
+          } else {
+            showModal('Presensi Berhasil', res.message, res.waLink);
+          }
+        } else {
+          playAudioFeedback('error');
+          showModal('Gagal Presensi', res ? res.message : 'QR Code tidak terdaftar');
+        }
+
+        setTimeout(function() {
+          scanCooldown = false;
+          lastScannedCode = '';
+          if (statusElem) {
+            statusElem.style.background = '#dcfce7';
+            statusElem.style.color = '#15803d';
+            statusElem.innerHTML = '<i class="fa-solid fa-video"></i> Kamera Siap. Arahkan QR Code ke Kotak.';
+          }
+        }, 2000);
+      })
+      .catch(function(err) {
+        playAudioFeedback('error');
+        showModal('Gagal', err.message || 'Error koneksi server');
+        setTimeout(function() {
+          scanCooldown = false;
+          lastScannedCode = '';
+        }, 2000);
+      });
+  }
+
+  function handleAbsensiSubmit(e) {
+    if (e && e.preventDefault) e.preventDefault();
+    
+    var selSubj = document.getElementById('selectSubjek');
+    var selStat = document.getElementById('selectStatus');
+    var txtKet = document.getElementById('txtKeterangan');
+
+    var idSubjek = selSubj ? selSubj.value : '';
+    var status = selStat ? selStat.value : 'Hadir';
+    var keterangan = txtKet ? txtKet.value : '';
+
+    if (!idSubjek) {
+      showModal('Peringatan', 'Silakan pilih ' + currentCategory + ' terlebih dahulu!');
+      return;
+    }
+
+    var currentTemplate = getActiveWATemplate();
+
+    callBackend('recordAbsensi', {
+      category: currentCategory,
+      idSubjek: idSubjek,
+      status: status,
+      keterangan: keterangan,
+      customTemplate: currentTemplate
+    }, { isPost: true }).then(function(res) {
+      if (res && res.success) {
+        playAudioFeedback('success');
+        
+        if (res.waLink) {
+          window.open(res.waLink, '_blank');
+        }
+
+        showModal('Sukses', res.message, res.waLink);
+        if (txtKet) txtKet.value = '';
+        loadCategoryData();
+      } else {
+        playAudioFeedback('error');
+        showModal('Gagal', (res ? res.message : 'Terjadi kesalahan sistem'));
+      }
+    }).catch(function(err) {
+      playAudioFeedback('error');
+      showModal('Gagal', err.message || 'Gagal terhubung ke Server');
+    });
+  }
+
+  function switchMode(mode) {
+    var tMan = document.getElementById('tabManual');
+    var tScan = document.getElementById('tabScan');
+    var fAbs = document.getElementById('formAbsensi');
+    var qArea = document.getElementById('qrScannerArea');
+
+    if (tMan) tMan.classList.toggle('active', mode === 'manual');
+    if (tScan) tScan.classList.toggle('active', mode === 'scan');
+
+    if (fAbs) fAbs.style.display = (mode === 'manual') ? 'block' : 'none';
+    if (qArea) qArea.style.display = (mode === 'scan') ? 'block' : 'none';
+
+    if (mode === 'scan') {
+      startCameraScanner();
+    } else {
+      stopCameraScanner();
+    }
+  }
+
+  function startCameraScanner() {
+    if (isCameraStarting) return;
+    isCameraStarting = true;
+
+    stopCameraScanner().then(function() {
+      var statusElem = document.getElementById('cameraStatusText');
+      if (statusElem) {
+        statusElem.style.background = '#f1f5f9';
+        statusElem.style.color = '#64748b';
+        statusElem.innerHTML = '<i class="fa-solid fa-circle-notch fa-spin"></i> Membuka stream kamera...';
+      }
+
+      if (typeof Html5Qrcode === 'undefined') {
+        isCameraStarting = false;
+        if (statusElem) {
+          statusElem.style.background = '#ffe4e6';
+          statusElem.style.color = '#be123c';
+          statusElem.innerHTML = '<i class="fa-solid fa-triangle-exclamation"></i> Library Scanner belum dimuat!';
+        }
+        return;
+      }
+
+      Html5Qrcode.getCameras().then(function(devices) {
+        var camSelect = document.getElementById('cameraSelect');
+        if (camSelect) camSelect.innerHTML = '';
+
+        if (devices && devices.length > 0) {
+          devices.forEach(function(device, idx) {
+            var label = device.label || ('Kamera ' + (idx + 1));
+            if (camSelect) {
+              camSelect.innerHTML += '<option value="' + device.id + '">' + label + '</option>';
+            }
+          });
+
+          if (selectedCameraId) {
+            if (camSelect) camSelect.value = selectedCameraId;
+            initCameraInstance(selectedCameraId);
+          } else {
+            selectedCameraId = devices[0].id;
+            if (camSelect) camSelect.value = selectedCameraId;
+            initCameraInstance({ facingMode: currentFacingMode });
+          }
+        } else {
+          initCameraInstance({ facingMode: currentFacingMode });
+        }
+      }).catch(function(err) {
+        console.warn('Get cameras failed, using facingMode:', err);
+        initCameraInstance({ facingMode: currentFacingMode });
+      });
+    });
+  }
+
+  function toggleCameraFacingMode() {
+    currentFacingMode = (currentFacingMode === 'environment') ? 'user' : 'environment';
+    selectedCameraId = '';
+    startCameraScanner();
+  }
+
+  function initCameraInstance(cameraConfig) {
+    var statusElem = document.getElementById('cameraStatusText');
+    if (statusElem) {
+      statusElem.style.background = '#f1f5f9';
+      statusElem.style.color = '#64748b';
+      statusElem.innerHTML = '<i class="fa-solid fa-circle-notch fa-spin"></i> Membuka video...';
+    }
+
+    try {
+      html5QrScanner = new Html5Qrcode("reader");
+      var qrBoxSize = Math.min(window.innerWidth * 0.65, 220);
+
+      html5QrScanner.start(
+        cameraConfig,
+        { 
+          fps: 10, 
+          qrbox: { width: qrBoxSize, height: qrBoxSize },
+          aspectRatio: 1.0
+        },
+        onScanSuccess,
+        onScanFailure
+      ).then(function() {
+        isCameraStarting = false;
+        if (statusElem) {
+          statusElem.style.background = '#dcfce7';
+          statusElem.style.color = '#15803d';
+          statusElem.innerHTML = '<i class="fa-solid fa-video"></i> Kamera Siap (' + (currentFacingMode === 'user' ? 'Depan' : 'Belakang') + '). Arahkan QR Code.';
+        }
+      }).catch(function(err) {
+        isCameraStarting = false;
+        console.error("Camera start error:", err);
+        if (statusElem) {
+          statusElem.style.background = '#ffe4e6';
+          statusElem.style.color = '#be123c';
+          statusElem.innerHTML = '<i class="fa-solid fa-triangle-exclamation"></i> Gagal memuat kamera: ' + (err.message || err);
+        }
+      });
+    } catch(e) {
+      isCameraStarting = false;
+      console.error("Camera exception:", e);
+    }
+  }
+
+  function onScanFailure(error) {
+    // Silent
+  }
+
+  function changeCamera(camId) {
+    if (!camId) return;
+    selectedCameraId = camId;
+    startCameraScanner();
+  }
+
+  function restartCameraScanner() {
+    startCameraScanner();
+  }
+
+  function stopCameraScanner() {
+    return new Promise(function(resolve) {
+      if (html5QrScanner) {
+        html5QrScanner.stop().then(function() {
+          try { html5QrScanner.clear(); } catch(e){}
+          html5QrScanner = null;
+          resolve();
+        }).catch(function(e) {
+          try { html5QrScanner.clear(); } catch(ex){}
+          html5QrScanner = null;
+          resolve();
+        });
+      } else {
+        resolve();
+      }
+    });
+  }
+
+  function handleAddSiswa(e) {
+    if (e && e.preventDefault) e.preventDefault();
+    
+    var inputNis = document.getElementById('addNisSiswa');
+    var inputNama = document.getElementById('addNamaSiswa');
+    var inputKelas = document.getElementById('addKelasSiswa');
+    var inputWa = document.getElementById('addWaSiswa');
+
+    var nis = inputNis ? inputNis.value : '';
+    var nama = inputNama ? inputNama.value : '';
+    var kelas = inputKelas ? inputKelas.value : '';
+    var wa = inputWa ? inputWa.value : '';
+
+    callBackend('addNewSiswa', { nis: nis, nama: nama, kelas: kelas, noWA: wa }, { isPost: true })
+      .then(function(res) {
+        if (res && res.success) {
+          showModal('Sukses', res.message);
+          if (inputNis) inputNis.value = '';
+          if (inputNama) inputNama.value = '';
+          if (inputKelas) inputKelas.value = '';
+          if (inputWa) inputWa.value = '';
+          loadMasterSiswa();
+        } else {
+          showModal('Gagal', res ? res.message : 'Gagal menyimpan data');
+        }
+      })
+      .catch(function(err) { showModal('Gagal', err.message || 'Gagal koneksi server'); });
+  }
+
+  function handleAddGuru(e) {
+    if (e && e.preventDefault) e.preventDefault();
+    
+    var inputNip = document.getElementById('addNipGuru');
+    var inputNama = document.getElementById('addNamaGuru');
+    var inputMapel = document.getElementById('addMapelGuru');
+    var inputWa = document.getElementById('addWaGuru');
+
+    var nip = inputNip ? inputNip.value : '';
+    var nama = inputNama ? inputNama.value : '';
+    var mapel = inputMapel ? inputMapel.value : '';
+    var wa = inputWa ? inputWa.value : '';
+
+    callBackend('addNewGuru', { nip: nip, nama: nama, mapel: mapel, noWA: wa }, { isPost: true })
+      .then(function(res) {
+        if (res && res.success) {
+          showModal('Sukses', res.message);
+          if (inputNip) inputNip.value = '';
+          if (inputNama) inputNama.value = '';
+          if (inputMapel) inputMapel.value = '';
+          if (inputWa) inputWa.value = '';
+          loadMasterGuru();
+        } else {
+          showModal('Gagal', res ? res.message : 'Gagal menyimpan data');
+        }
+      })
+      .catch(function(err) { showModal('Gagal', err.message || 'Gagal koneksi server'); });
+  }
+
+  function loadMasterSiswa() {
+    callBackend('getSiswaList')
+      .then(function(res) {
+        if (res && res.success && res.data) {
+          var tbody = document.getElementById('tableMasterSiswa');
+          if (!tbody) return;
+          tbody.innerHTML = '';
+          res.data.forEach(function(item) {
+            var tr = document.createElement('tr');
+            tr.innerHTML = '<td>' + escapeHtml(item.id) + '</td>' +
+                           '<td>' + escapeHtml(item.nis) + '</td>' +
+                           '<td style="font-weight:600;">' + escapeHtml(item.nama) + '</td>' +
+                           '<td>' + escapeHtml(item.kelas) + '</td>' +
+                           '<td>' + escapeHtml(item.noWA || '-') + '</td>' +
+                           '<td>' +
+                             '<button class="btn-action-edit" onclick="openEditModal(\'Siswa\',\'' + escapeHtml(item.id) + '\',\'' + escapeHtml(item.nis) + '\',\'' + escapeHtml(item.nama) + '\',\'' + escapeHtml(item.kelas) + '\',\'' + escapeHtml(item.noWA || '') + '\')"><i class="fa-solid fa-pen"></i></button>' +
+                             '<button class="btn-action-delete" onclick="confirmDeleteMaster(\'Siswa\',\'' + escapeHtml(item.id) + '\',\'' + escapeHtml(item.nama) + '\')"><i class="fa-solid fa-trash"></i></button>' +
+                             '<button class="btn-submit" style="padding:4px 8px; font-size:11px; width:auto; min-height:28px;" onclick="showQRModal(\'' + escapeHtml(item.id) + '\',\'' + escapeHtml(item.nama) + '\')"><i class="fa-solid fa-qrcode"></i> QR</button>' +
+                           '</td>';
+            tbody.appendChild(tr);
+          });
+        }
+      })
+      .catch(function(err) {
+        console.warn('Load Master Siswa failed:', err.message || err);
+      });
+  }
+
+  function loadMasterGuru() {
+    callBackend('getGuruList')
+      .then(function(res) {
+        if (res && res.success && res.data) {
+          var tbody = document.getElementById('tableMasterGuru');
+          if (!tbody) return;
+          tbody.innerHTML = '';
+          res.data.forEach(function(item) {
+            var tr = document.createElement('tr');
+            tr.innerHTML = '<td>' + escapeHtml(item.id) + '</td>' +
+                           '<td>' + escapeHtml(item.nip) + '</td>' +
+                           '<td style="font-weight:600;">' + escapeHtml(item.nama) + '</td>' +
+                           '<td>' + escapeHtml(item.mapel) + '</td>' +
+                           '<td>' + escapeHtml(item.noWA || '-') + '</td>' +
+                           '<td>' +
+                             '<button class="btn-action-edit" onclick="openEditModal(\'Guru\',\'' + escapeHtml(item.id) + '\',\'' + escapeHtml(item.nip) + '\',\'' + escapeHtml(item.nama) + '\',\'' + escapeHtml(item.mapel) + '\',\'' + escapeHtml(item.noWA || '') + '\')"><i class="fa-solid fa-pen"></i></button>' +
+                             '<button class="btn-action-delete" onclick="confirmDeleteMaster(\'Guru\',\'' + escapeHtml(item.id) + '\',\'' + escapeHtml(item.nama) + '\')"><i class="fa-solid fa-trash"></i></button>' +
+                             '<button class="btn-submit" style="padding:4px 8px; font-size:11px; width:auto; min-height:28px;" onclick="showQRModal(\'' + escapeHtml(item.id) + '\',\'' + escapeHtml(item.nama) + '\')"><i class="fa-solid fa-qrcode"></i> QR</button>' +
+                           '</td>';
+            tbody.appendChild(tr);
+          });
+        }
+      })
+      .catch(function(err) {
+        console.warn('Load Master Guru failed:', err.message || err);
+      });
+  }
+
+  function openEditModal(type, id, nisNip, nama, kelasMapel, noWA) {
+    var editType = document.getElementById('editMasterType');
+    var editId = document.getElementById('editMasterId');
+    var inputNisNip = document.getElementById('editNisNip');
+    var inputNama = document.getElementById('editNama');
+    var inputKelasMapel = document.getElementById('editKelasMapel');
+    var inputNoWa = document.getElementById('editNoWa');
+    var lblNisNip = document.getElementById('lblEditNisNip');
+    var lblKelasMapel = document.getElementById('lblEditKelasMapel');
+    var modalTitle = document.getElementById('editModalTitle');
+
+    if (editType) editType.value = type;
+    if (editId) editId.value = id;
+    if (inputNisNip) inputNisNip.value = nisNip;
+    if (inputNama) inputNama.value = nama;
+    if (inputKelasMapel) inputKelasMapel.value = kelasMapel;
+    if (inputNoWa) inputNoWa.value = noWA;
+
+    if (type === 'Siswa') {
+      if (modalTitle) modalTitle.innerText = 'Edit Data Siswa';
+      if (lblNisNip) lblNisNip.innerText = 'NIS Siswa';
+      if (lblKelasMapel) lblKelasMapel.innerText = 'Kelas';
+    } else {
+      if (modalTitle) modalTitle.innerText = 'Edit Data Guru';
+      if (lblNisNip) lblNisNip.innerText = 'NIP Guru';
+      if (lblKelasMapel) lblKelasMapel.innerText = 'Mata Pelajaran';
+    }
+
+    var modal = document.getElementById('editMasterModal');
+    if (modal) modal.classList.add('active');
+  }
+
+  function closeEditModal() {
+    var modal = document.getElementById('editMasterModal');
+    if (modal) modal.classList.remove('active');
+  }
+
+  function handleEditMasterSubmit(e) {
+    if (e && e.preventDefault) e.preventDefault();
+    
+    var type = document.getElementById('editMasterType').value;
+    var id = document.getElementById('editMasterId').value;
+    var nisNip = document.getElementById('editNisNip').value;
+    var nama = document.getElementById('editNama').value;
+    var kelasMapel = document.getElementById('editKelasMapel').value;
+    var noWA = document.getElementById('editNoWa').value;
+
+    var actionName = (type === 'Siswa') ? 'updateSiswa' : 'updateGuru';
+    var payload = (type === 'Siswa') ? 
+      { id: id, nis: nisNip, nama: nama, kelas: kelasMapel, noWA: noWA } :
+      { id: id, nip: nisNip, nama: nama, mapel: kelasMapel, noWA: noWA };
+
+    callBackend(actionName, payload, { isPost: true })
+      .then(function(res) {
+        closeEditModal();
+        if (res && res.success) {
+          showModal('Sukses', res.message);
+          if (type === 'Siswa') loadMasterSiswa();
+          else loadMasterGuru();
+        } else {
+          showModal('Gagal', res ? res.message : 'Gagal memperbarui data');
+        }
+      })
+      .catch(function(err) {
+        closeEditModal();
+        showModal('Gagal', err.message || 'Error koneksi server');
+      });
+  }
+
+  function confirmDeleteMaster(type, id, nama) {
+    if (!confirm('Apakah Anda yakin ingin menghapus data ' + type + ' ' + nama + '?')) return;
+
+    var actionName = (type === 'Siswa') ? 'deleteSiswa' : 'deleteGuru';
+    callBackend(actionName, { id: id }, { isPost: true })
+      .then(function(res) {
+        if (res && res.success) {
+          showModal('Sukses', res.message);
+          if (type === 'Siswa') loadMasterSiswa();
+          else loadMasterGuru();
+        } else {
+          showModal('Gagal', res ? res.message : 'Gagal menghapus data');
+        }
+      })
+      .catch(function(err) { showModal('Gagal', err.message || 'Error koneksi server'); });
+  }
+
+  function showQRModal(id, nama) {
+    var mTitle = document.getElementById('modalTitle');
+    var mBody = document.getElementById('modalBody');
+    var qrSubj = document.getElementById('qrSubjekLabel');
+    var qrContainer = document.getElementById('qrcode');
+    var modalQR = document.getElementById('modalQRContainer');
+    var btnWA = document.getElementById('btnWALink');
+
+    if (mTitle) mTitle.innerText = 'Kartu QR Presensi';
+    if (mBody) mBody.innerText = 'Gunakan QR Code ini saat melakukan presensi di kamera sekolah.';
+    if (qrSubj) qrSubj.innerText = nama + ' (' + id + ')';
+    
+    if (qrContainer) {
+      qrContainer.innerHTML = '';
+      if (typeof QRCode !== 'undefined') {
+        new QRCode(qrContainer, { text: id, width: 140, height: 140 });
+      }
+    }
+
+    if (modalQR) modalQR.style.display = 'block';
+    if (btnWA) btnWA.style.display = 'none';
+    
+    var modal = document.getElementById('customModal');
+    if (modal) modal.classList.add('active');
+  }
+
+  function printBatchQR(type) {
+    var actionName = (type === 'Siswa') ? 'getSiswaList' : 'getGuruList';
+    callBackend(actionName)
+      .then(function(res) {
+        if (res && res.success && res.data && res.data.length > 0) {
+          var pSec = document.getElementById('printSection');
+          if (!pSec) return;
+          pSec.innerHTML = '';
+          
+          res.data.forEach(function(item) {
+            var card = document.createElement('div');
+            card.className = 'qr-card-print';
+            var qId = 'print_qr_' + item.id;
+            card.innerHTML = '<h4>' + escapeHtml(item.nama) + '</h4><p style="font-size:11px;">' + escapeHtml(item.kelas || item.mapel) + ' | ' + escapeHtml(item.id) + '</p><div id="' + qId + '" style="display:inline-block; margin-top:8px;"></div>';
+            pSec.appendChild(card);
+            
+            setTimeout(function() {
+              var container = document.getElementById(qId);
+              if (container && typeof QRCode !== 'undefined') {
+                new QRCode(container, { text: item.id, width: 100, height: 100 });
+              }
+            }, 100);
+          });
+
+          setTimeout(function() { window.print(); }, 800);
+        }
+      })
+      .catch(function(err) {
+        showModal('Gagal Cetak', err.message || 'Gagal memuat data');
+      });
+  }
+
+  function loadRekapData() {
+    var periodeVal = document.getElementById('rekapPeriode') ? document.getElementById('rekapPeriode').value : 'Harian';
+    var kelasVal = document.getElementById('rekapFilterKelas') ? document.getElementById('rekapFilterKelas').value : 'Semua Kelas';
+
+    callBackend('getRekapAbsensi', {
+      category: rekapCategory,
+      periode: periodeVal,
+      filterKelas: kelasVal
+    }).then(function(res) {
+      if (res && res.success) {
+        renderRekapTable(res.data);
+        
+        var m = res.metrics || { total: 0, hadir: 0, terlambat: 0, izin: 0, tidakHadir: 0 };
+        var eTot = document.getElementById('rekapTotalCount');
+        var eHad = document.getElementById('rekapHadirCount');
+        var eTer = document.getElementById('rekapTerlambatCount');
+        var eTHad = document.getElementById('rekapTidakHadirCount');
+
+        if (eTot) eTot.innerText = m.total;
+        if (eHad) eHad.innerText = m.hadir;
+        if (eTer) eTer.innerText = m.terlambat;
+        if (eTHad) eTHad.innerText = m.tidakHadir;
+      }
+    }).catch(function(err) {
+      console.warn('Load Rekap Data failed:', err.message || err);
+      renderRekapTable([]);
+    });
+  }
+
+  function renderRekapTable(data) {
+    var tbody = document.getElementById('tableRekapBody');
+    if (!tbody) return;
+    tbody.innerHTML = '';
+
+    if (!data || data.length === 0) {
+      tbody.innerHTML = '<tr><td colspan="7" style="text-align:center; color: var(--text-muted); padding:20px;">Belum ada data rekapitulasi absensi untuk periode ini.</td></tr>';
+      return;
+    }
+
+    data.forEach(function(item, idx) {
+      var badgeClass = 'badge-hadir';
+      if (item.status === 'Terlambat') badgeClass = 'badge-terlambat';
+      else if (item.status === 'Izin' || item.status === 'Sakit') badgeClass = 'badge-izin';
+      else if (item.status === 'Tidak Hadir' || item.status === 'Alpa') badgeClass = 'badge-alpa';
+
+      var tr = document.createElement('tr');
+      tr.innerHTML = '<td>' + (idx + 1) + '</td>' +
+                     '<td>' + escapeHtml(item.tanggal) + '</td>' +
+                     '<td style="font-weight:600;">' + escapeHtml(item.nama) + '</td>' +
+                     '<td>' + escapeHtml(item.kelasMapel) + '</td>' +
+                     '<td>' + escapeHtml(item.jamMasuk) + '</td>' +
+                     '<td><span class="badge ' + badgeClass + '">' + escapeHtml(item.status) + '</span></td>' +
+                     '<td style="color:var(--text-muted);">' + escapeHtml(item.keterangan) + '</td>';
+      tbody.appendChild(tr);
+    });
+  }
+
+  function exportRekapToExcel() {
+    var tbody = document.getElementById('tableRekapBody');
+    if (!tbody) return;
+    var rows = tbody.querySelectorAll('tr');
+
+    if (rows.length === 0 || (rows.length === 1 && rows[0].cells.length === 1)) {
+      showModal('Peringatan', 'Tidak ada data rekap untuk diunduh.');
+      return;
+    }
+
+    var periodeVal = document.getElementById('rekapPeriode') ? document.getElementById('rekapPeriode').value : 'Harian';
+    
+    var excelXML = '<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel" xmlns="http://www.w3.org/TR/REC-html40">' +
+      '<head><meta charset="UTF-8"><!--[if gte mso 9]><xml><x:ExcelWorkbook><x:ExcelWorksheets><x:ExcelWorksheet>' +
+      '<x:Name>Rekap Absensi</x:Name><x:WorksheetOptions><x:DisplayGridlines/></x:WorksheetOptions></x:ExcelWorksheet></x:ExcelWorksheets></x:ExcelWorkbook></xml><![endif]--></head>' +
+      '<body>' +
+      '<h2>LAPORAN REKAPITULASI ABSENSI DIGITAL TSHACI</h2>' +
+      '<p>Kategori: ' + rekapCategory + ' | Periode: ' + periodeVal + '</p>' +
+      '<table border="1">' +
+      '<thead><tr style="background-color:#1e293b; color:#ffffff;"><th>No</th><th>Tanggal</th><th>Nama</th><th>Kelas/Mapel</th><th>Jam Masuk</th><th>Status</th><th>Keterangan</th></tr></thead><tbody>';
+
+    rows.forEach(function(row) {
+      var cols = row.querySelectorAll('td');
+      excelXML += '<tr>';
+      cols.forEach(function(col) {
+        excelXML += '<td>' + escapeHtml(col.innerText) + '</td>';
+      });
+      excelXML += '</tr>';
+    });
+
+    excelXML += '</tbody></table></body></html>';
+
+    var blob = new Blob([excelXML], { type: 'application/vnd.ms-excel;charset=utf-8' });
+    var link = document.createElement("a");
+    link.href = URL.createObjectURL(blob);
+    link.download = "Rekap_Absensi_" + rekapCategory + "_" + periodeVal + ".xls";
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  }
+
+  function exportRekapToPDF() {
+    var periodeVal = document.getElementById('rekapPeriode') ? document.getElementById('rekapPeriode').value : 'Harian';
+    var kelasVal = document.getElementById('rekapFilterKelas') ? document.getElementById('rekapFilterKelas').value : 'Semua Kelas';
+
+    showModal('Memproses PDF', 'Sedang menyusun dokumen PDF laporan rekapitulasi, harap tunggu...');
+
+    callBackend('generatePDFReport', {
+      category: rekapCategory,
+      periode: periodeVal,
+      filterKelas: kelasVal
+    }).then(function(res) {
+      closeModal();
+      if (res && res.success && res.base64) {
+        var byteCharacters = atob(res.base64);
+        var byteNumbers = new Array(byteCharacters.length);
+        for (var i = 0; i < byteCharacters.length; i++) {
+          byteNumbers[i] = byteCharacters.charCodeAt(i);
+        }
+        var byteArray = new Uint8Array(byteNumbers);
+        var blob = new Blob([byteArray], { type: 'application/pdf' });
+        
+        var link = document.createElement('a');
+        link.href = URL.createObjectURL(blob);
+        link.download = res.filename || 'Laporan_Rekap_Absensi.pdf';
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        
+        showModal('Sukses', 'Laporan PDF berhasil diunduh!');
+      } else {
+        showModal('Gagal', res ? res.message : 'Gagal menghasilkan PDF');
+      }
+    }).catch(function(err) {
+      closeModal();
+      showModal('Gagal', err.message || 'Gagal koneksi ke server');
+    });
+  }
+
+  function showModal(title, body, waLink) {
+    var mTitle = document.getElementById('modalTitle');
+    var mBody = document.getElementById('modalBody');
+    var modalQR = document.getElementById('modalQRContainer');
+    var btnWA = document.getElementById('btnWALink');
+
+    if (mTitle) mTitle.innerText = title;
+    if (mBody) mBody.innerText = body;
+    if (modalQR) modalQR.style.display = 'none';
+
+    if (btnWA) {
+      if (waLink) {
+        btnWA.href = waLink;
+        btnWA.style.display = 'inline-flex';
+      } else {
+        btnWA.style.display = 'none';
+      }
+    }
+
+    var modal = document.getElementById('customModal');
+    if (modal) modal.classList.add('active');
+  }
+
+  function closeModal() {
+    var modal = document.getElementById('customModal');
+    if (modal) modal.classList.remove('active');
+  }
+
+  function escapeHtml(str) {
+    if (!str) return '';
+    return String(str)
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#039;');
+  }
+
+  function onFilterChange() { currentPage = 1; fetchTableData(); }
+  function changePage(delta) { currentPage += delta; if (currentPage < 1) currentPage = 1; fetchTableData(); }
+  function triggerWA(nama, status) { showModal('Pemberitahuan WA', 'Siapkan pesan notifikasi WhatsApp untuk ' + nama + ' (Status: ' + status + ').'); }
+
+  function triggerWANotificationTidakHadir() {
+    var currentTemplate = getActiveWATemplate();
+
+    callBackend('getTidakHadirWALinks', { category: currentCategory, customTemplate: currentTemplate })
+      .then(function(res) {
+        if (res && res.success) {
+          if (!res.items || res.items.length === 0) {
+            showModal('Notifikasi WA', 'Tidak ada data ' + currentCategory + ' yang berstatus TIDAK HADIR / ALPA hari ini.');
+            return;
+          }
+
+          if (res.items.length === 1) {
+            var item = res.items[0];
+            if (item.waLink) {
+              window.open(item.waLink, '_blank');
+              showModal('Pesan WA Siap', 'Notifikasi WA untuk ' + item.nama + ' (' + item.status + ') telah dibuka di tab WhatsApp.');
+            } else {
+              showModal('Gagal', 'Nomor WhatsApp untuk ' + item.nama + ' tidak ditemukan di database!');
+            }
+          } else {
+            var mTitle = document.getElementById('modalTitle');
+            var mBody = document.getElementById('modalBody');
+            var modalQR = document.getElementById('modalQRContainer');
+            var btnWA = document.getElementById('btnWALink');
+
+            if (mTitle) mTitle.innerText = 'Daftar ' + currentCategory + ' Tidak Hadir Hari Ini (' + res.items.length + ')';
+            if (modalQR) modalQR.style.display = 'none';
+            if (btnWA) btnWA.style.display = 'none';
+
+            var htmlList = '<p style="font-size:12px; margin-bottom:12px; color:var(--text-muted);">Pilih nama di bawah untuk mengirim pesan WA ke orang tua/wali:</p><div style="max-height:220px; overflow-y:auto; display:flex; flex-direction:column; gap:8px;">';
+            res.items.forEach(function(it) {
+              if (it.waLink) {
+                htmlList += '<div style="display:flex; justify-content:space-between; align-items:center; background:#f8fafc; padding:8px 12px; border-radius:6px; border:1px solid #e2e8f0;">' +
+                              '<div><strong style="font-size:13px;">' + escapeHtml(it.nama) + '</strong><br><span style="font-size:11px; color:#64748b;">' + escapeHtml(it.kelasMapel) + '</span></div>' +
+                              '<a href="' + it.waLink + '" target="_blank" class="btn-submit" style="width:auto; padding:4px 10px; font-size:11px; background:#22c55e;"><i class="fa-brands fa-whatsapp"></i> Kirim WA</a>' +
+                            '</div>';
+              } else {
+                htmlList += '<div style="display:flex; justify-content:space-between; align-items:center; background:#fff1f2; padding:8px 12px; border-radius:6px; border:1px solid #fecdd3;">' +
+                              '<div><strong style="font-size:13px;">' + escapeHtml(it.nama) + '</strong><br><span style="font-size:11px; color:#e11d48;">No WA belum diisi</span></div>' +
+                            '</div>';
+              }
+            });
+            htmlList += '</div>';
+
+            if (mBody) mBody.innerHTML = htmlList;
+
+            var modal = document.getElementById('customModal');
+            if (modal) modal.classList.add('active');
+          }
+        } else {
+          showModal('Gagal', res ? res.message : 'Gagal mengambil data tidak hadir.');
+        }
+      })
+      .catch(function(err) { showModal('Gagal', err.message || 'Error koneksi server'); });
+  }
+</script>
